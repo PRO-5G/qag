@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Qag Messenger Ultra Simple</title>
+    <style>
+        body { 
+            font-family: Arial; 
+            max-width: 600px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background: #f5f5f5;
+        }
+        .auth-form, .chat-section { 
+            background: white;
+            margin: 20px 0; 
+            padding: 20px; 
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        input, button { 
+            padding: 12px; 
+            margin: 5px; 
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        input { width: 250px; }
+        button { 
+            background: #007bff; 
+            color: white; 
+            border: none;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        #messages { 
+            height: 300px; 
+            border: 1px solid #eee; 
+            overflow-y: scroll; 
+            padding: 10px;
+            margin: 10px 0;
+            background: #fafafa;
+        }
+        .message { 
+            margin: 10px 0; 
+            padding: 8px; 
+            background: #e3f2fd; 
+            border-radius: 5px;
+        }
+        .my-message { 
+            background: #e8f5e8; 
+            text-align: right;
+        }
+        .status { color: #28a745; font-weight: bold; }
+        .error { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>💬 Qag Messenger Alpha 0.1</h1>
+    
+    <!-- Форма входа/регистрации -->
+    <div class="auth-form" id="authSection">
+        <h3>🔐 Вход / Регистрация</h3>
+        <input type="text" id="usernameInput" placeholder="Логин">
+        <input type="password" id="passwordInput" placeholder="Пароль">
+        <br>
+        <button onclick="login()">Войти</button>
+        <button onclick="register()">Зарегистрироваться</button>
+        <div id="authStatus"></div>
+    </div>
+    
+    <!-- Чат (после входа) -->
+    <div class="chat-section" id="chatSection" style="display: none;">
+        <h3>✅ Вы вошли как: <span id="userName"></span></h3>
+        <p>Ваш ID: <span id="userIdDisplay" class="status"></span></p>
+        
+        <div>
+            <input type="text" id="friendIdInput" placeholder="ID друга для общения">
+            <button onclick="startChat()">Начать чат</button>
+        </div>
+        
+        <div id="messages"></div>
+        
+        <div>
+            <input type="text" id="messageInput" placeholder="Введите сообщение..." onkeypress="handleKeyPress(event)">
+            <button onclick="sendMessage()">📤 Отправить</button>
+        </div>
+    </div>
+
+    <!-- Подключаем Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <script>
+        // Глобальные переменные
+        let socket = null;
+        let currentUserId = null;
+        let currentUserName = null;
+        let currentFriendId = null;
+
+        // Подключение к серверу
+        function connectSocket() {
+            socket = io();
+            
+            // Получаем новые сообщения
+            socket.on('new_message', (message) => {
+                displayMessage(message);
+            });
+        }
+
+        // Регистрация
+        async function register() {
+            const username = document.getElementById('usernameInput').value;
+            const password = document.getElementById('passwordInput').value;
+            
+            if (!username || !password) {
+                showAuthStatus('Заполните все поля!', 'error');
+                return;
+            }
+            
+            const response = await fetch('/api/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, action: 'register' })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAuthStatus(`Регистрация успешна! Ваш ID: ${result.userId}`, 'status');
+                setTimeout(() => loginSuccess(result.userId, username), 1000);
+            } else {
+                showAuthStatus('Ошибка: ' + result.error, 'error');
+            }
+        }
+
+        // Вход
+        async function login() {
+            const username = document.getElementById('usernameInput').value;
+            const password = document.getElementById('passwordInput').value;
+            
+            if (!username || !password) {
+                showAuthStatus('Заполните все поля!', 'error');
+                return;
+            }
+            
+            const response = await fetch('/api/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, action: 'login' })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                loginSuccess(result.userId, username);
+            } else {
+                showAuthStatus('Ошибка: ' + result.error, 'error');
+            }
+        }
+
+        // Успешный вход
+        function loginSuccess(userId, username) {
+            currentUserId = userId;
+            currentUserName = username;
+            
+            document.getElementById('authSection').style.display = 'none';
+            document.getElementById('chatSection').style.display = 'block';
+            document.getElementById('userIdDisplay').textContent = userId;
+            document.getElementById('userName').textContent = username;
+            
+            connectSocket();
+            socket.emit('user_online', userId);
+            
+            showAuthStatus('Вход выполнен!', 'status');
+        }
+
+        // Начать общение с другом
+        function startChat() {
+            currentFriendId = document.getElementById('friendIdInput').value;
+            if (!currentFriendId) {
+                alert('Введите ID друга!');
+                return;
+            }
+            document.getElementById('messages').innerHTML = '<div class="status">💬 Чат начат с пользователем ID: ' + currentFriendId + '</div>';
+        }
+
+        // Отправить сообщение
+        function sendMessage() {
+            if (!currentFriendId) {
+                alert('Сначала введите ID друга!');
+                return;
+            }
+            
+            const text = document.getElementById('messageInput').value.trim();
+            if (!text) return;
+            
+            const messageData = {
+                fromUserId: currentUserId,
+                fromUserName: currentUserName,
+                toUserId: currentFriendId,
+                text: text,
+                timestamp: new Date().toLocaleTimeString()
+            };
+            
+            socket.emit('send_message', messageData);
+            document.getElementById('messageInput').value = '';
+        }
+
+        // Enter для отправки
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Показать сообщение
+        function displayMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            
+            if (message.fromUserId === currentUserId) {
+                messageDiv.className = 'message my-message';
+                messageDiv.innerHTML = `<strong>Я:</strong> ${message.text} <small>(${message.timestamp})</small>`;
+            } else {
+                messageDiv.className = 'message';
+                messageDiv.innerHTML = `<strong>${message.fromUserName}:</strong> ${message.text} <small>(${message.timestamp})</small>`;
+            }
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Показать статус авторизации
+        function showAuthStatus(text, type) {
+            const statusDiv = document.getElementById('authStatus');
+            statusDiv.textContent = text;
+            statusDiv.className = type;
+        }
+    </script>
+</body>
+</html>
